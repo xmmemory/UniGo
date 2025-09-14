@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+
+// 初始化认证存储
+const authStore = useAuthStore()
 
 // 移动端菜单控制
 const isMenuOpen = ref(false)
@@ -14,6 +18,11 @@ const toggleMenu = () => {
 const closeMenu = () => {
   isMenuOpen.value = false
 }
+
+// 在应用启动时初始化认证状态
+onMounted(() => {
+  authStore.initializeAuth()
+})
 </script>
 
 <template>
@@ -44,12 +53,6 @@ const closeMenu = () => {
           </li>
           <li class="nav-item">
             <RouterLink to="/profile" class="nav-link" @click="closeMenu">个人中心</RouterLink>
-          </li>
-          <li class="nav-item">
-            <RouterLink to="/login" class="nav-link" @click="closeMenu">登录</RouterLink>
-          </li>
-          <li class="nav-item">
-            <RouterLink to="/register" class="nav-link" @click="closeMenu">注册</RouterLink>
           </li>
         </ul>
       </nav>

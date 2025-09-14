@@ -1,23 +1,29 @@
+import os
+import traceback
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from passlib.context import CryptContext
 from jose import JWTError, jwt
-from database import get_db
-from models import User
-from schemas import UserCreate
+from passlib.context import CryptContext
+from fastapi import HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
+from models import User as UserModel
+from database import get_db_with_retry
+from dotenv import load_dotenv
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+# 加载环境变量
+load_dotenv()
 
-# 密码哈希配置
-pwd_context = CryptContext(schemes=["bcrypt"], default="bcrypt")
+# 从环境变量获取配置，如果没有则使用默认值
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
-# JWT配置
-SECRET_KEY = "your-secret-key"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
+print(f"Auth SECRET_KEY: {SECRET_KEY}")
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login/")
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -25,14 +31,37 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return pwd_context.hash(password)
 
-def authenticate_user(db: Session, username: str, password: str):
-    # 根据 username 或 email 查找用户
-    db_user = db.query(User).filter((User.username == username) | (User.email == username)).first()
-    if not db_user:
-        return False
-    if not verify_password(password, db_user.hashed_password):
-        return False
-    return db_user
+def authenticate_user(username: str, password: str):
+    """
+    认证用户，带数据库连接重试机制
+    """
+    try:
+        # 使用带重试机制的数据库连接
+        db = get_db_with_retry()
+        try:
+            user = db.query(UserModel).filter(UserModel.username == username).first()
+            if not user:
+                return False
+            if not verify_password(password, user.hashed_password):
+                return False
+            return user
+        finally:
+            db.close()
+    except OperationalError as e:
+        # 数据库连接失败
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="数据库连接失败，请稍后重试"
+        )
+    except Exception as e:
+        # 打印详细的错误信息
+        print(f"认证用户时发生错误: {str(e)}")
+        print(f"错误追踪: {traceback.format_exc()}")
+        # 其他异常
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="服务器内部错误"
+        )
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -41,23 +70,53 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
+    print(f"Creating token with SECRET_KEY: {SECRET_KEY}")
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    """
+    获取当前用户，带数据库连接重试机制
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
     try:
+        print(f"Decoding token with SECRET_KEY: {SECRET_KEY}")
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
+        username = payload.get("sub")
+        print(f"Decoded username: {username}")
         if username is None:
             raise credentials_exception
-    except JWTError:
+    except JWTError as e:
+        print(f"JWTError: {e}")
         raise credentials_exception
-    user = db.query(User).filter(User.username == username).first()
-    if user is None:
-        raise credentials_exception
-    return user
+    
+    try:
+        # 使用带重试机制的数据库连接
+        db = get_db_with_retry()
+        try:
+            user = db.query(UserModel).filter(UserModel.username == username).first()
+            print(f"Found user: {user}")
+            if user is None:
+                raise credentials_exception
+            return user
+        finally:
+            db.close()
+    except OperationalError as e:
+        # 数据库连接失败
+        print(f"OperationalError: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="数据库连接失败，请稍后重试"
+        )
+    except Exception as e:
+        # 其他异常
+        print(f"Exception: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="服务器内部错误"
+        )

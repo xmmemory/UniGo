@@ -8,9 +8,9 @@
           <img src="@/assets/logo.svg" alt="头像">
         </div>
         <div class="user-details">
-          <h2>{{ user.username }}</h2>
-          <p>{{ user.email }}</p>
-          <p>注册时间: {{ formatDate(user.created_at) }}</p>
+          <h2>{{ user?.username || '加载中...' }}</h2>
+          <p>{{ user?.email || '加载中...' }}</p>
+          <p>注册时间: {{ user ? formatDate(user.created_at) : '加载中...' }}</p>
         </div>
       </div>
       
@@ -21,23 +21,6 @@
     </div>
     
     <div class="profile-sections">
-      <div class="section">
-        <h3>我发布的行程</h3>
-        <div class="trips-list">
-          <div class="trip-card" v-for="trip in userTrips" :key="trip.id">
-            <div class="trip-header">
-              <h4>{{ trip.departure }} → {{ trip.destination }}</h4>
-              <span class="price">¥{{ trip.price_per_person }}</span>
-            </div>
-            <div class="trip-details">
-              <p><strong>出发时间:</strong> {{ formatDate(trip.departure_time) }}</p>
-              <p><strong>剩余座位:</strong> {{ trip.available_seats }}</p>
-              <p><strong>预订人数:</strong> {{ trip.bookings_count }}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      
       <div class="section">
         <h3>我的支付记录</h3>
         <div class="payments-list">
@@ -52,6 +35,10 @@
           </div>
         </div>
       </div>
+    </div>
+    
+    <div class="history-link">
+      <router-link to="/history" class="btn btn-primary">查看历史订单</router-link>
     </div>
     
     <!-- 编辑资料表单 -->
@@ -82,99 +69,106 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-
-// 定义用户数据结构
-interface User {
-  id: number
-  username: string
-  email: string
-  created_at: string
-}
-
-interface Trip {
-  id: number
-  departure: string
-  destination: string
-  departure_time: string
-  price_per_person: number
-  available_seats: number
-  bookings_count: number
-}
-
-interface Payment {
-  id: number
-  amount: number
-  payment_date: string
-  status: string
-}
+import { getUserById } from '@/api/userService'
+import { useAuthStore } from '@/stores/auth'
 
 // 状态管理
-const user = ref<User>({
-  id: 1,
-  username: 'testuser',
-  email: 'test@example.com',
-  created_at: '2025-09-01T10:00:00'
-})
-
+const user = ref<any>(null)
 const editUser = ref({
-  username: 'testuser',
-  email: 'test@example.com',
+  username: '',
+  email: '',
   password: ''
 })
-
-const userTrips = ref<Trip[]>([])
-const payments = ref<Payment[]>([])
+const payments = ref<any[]>([])
 const showEditForm = ref(false)
 const router = useRouter()
+const authStore = useAuthStore()
 
 // 格式化日期
 const formatDate = (dateString: string) => {
-  const date = new Date(dateString)
-  return date.toLocaleString('zh-CN')
+  try {
+    const date = new Date(dateString)
+    return date.toLocaleString('zh-CN')
+  } catch (e) {
+    console.error('日期格式化错误:', e)
+    return '无效日期'
+  }
 }
 
-// 更新资料
-const updateProfile = () => {
-  console.log('更新资料:', editUser.value)
-  // 这里应该调用API更新用户资料
-  alert('资料更新成功！')
-  showEditForm.value = false
-  // 更新用户信息
-  user.value.username = editUser.value.username
-  user.value.email = editUser.value.email
+// 更新用户资料
+const updateProfile = async () => {
+  try {
+    // 这里应该调用API更新用户信息
+    // 暂时只更新本地状态
+    if (user.value) {
+      user.value.username = editUser.value.username
+      user.value.email = editUser.value.email
+      authStore.setUser(user.value)
+    }
+    showEditForm.value = false
+    alert('用户信息更新成功')
+  } catch (error: any) {
+    console.error('更新用户信息失败:', error)
+    if (error.message && error.message.includes('登录')) {
+      alert(error.message)
+      authStore.logout()
+      router.push('/login')
+    } else {
+      alert('更新用户信息失败')
+    }
+  }
 }
 
-// 退出登录
+// 登出
 const logout = () => {
-  // 这里应该清除认证信息
-  console.log('退出登录')
+  authStore.logout()
   router.push('/login')
 }
 
 // 加载用户数据
-const loadUserData = () => {
-  // 这里应该调用API获取用户数据
-  // 暂时使用模拟数据
-  userTrips.value = [
-    {
-      id: 1,
-      departure: '北京',
-      destination: '上海',
-      departure_time: '2025-09-05T08:00:00',
-      price_per_person: 150,
-      available_seats: 3,
-      bookings_count: 1
+const loadUserData = async () => {
+  try {
+    // 从认证存储中获取当前用户信息
+    if (authStore.user) {
+      user.value = authStore.user
+      editUser.value.username = authStore.user.username
+      editUser.value.email = authStore.user.email
+    } else if (authStore.token && authStore.user?.id) {
+      // 如果认证存储中没有用户信息但有token，从API获取
+      const userData = await getUserById(authStore.user.id, authStore.token)
+      user.value = userData
+      editUser.value.username = userData.username
+      editUser.value.email = userData.email
+      // 更新authStore中的用户信息
+      authStore.setUser(userData)
+    } else {
+      // 如果没有用户信息且没有token，重定向到登录页面
+      console.warn('没有用户信息且没有token，重定向到登录页面')
+      authStore.logout()
+      router.push('/login')
+      return
     }
-  ]
-  
-  payments.value = [
-    {
-      id: 1,
-      amount: 150,
-      payment_date: '2025-09-03T10:30:00',
-      status: 'paid'
+    
+    // 这里应该调用API获取支付记录
+    // 暂时使用模拟数据
+    payments.value = [
+      {
+        id: 1,
+        amount: 150,
+        payment_date: '2025-09-03T10:30:00',
+        status: 'paid'
+      }
+    ]
+  } catch (error: any) {
+    console.error('加载用户数据失败:', error)
+    if (error.message && error.message.includes('登录')) {
+      alert(error.message)
+      authStore.logout()
+      router.push('/login')
+    } else {
+      alert('加载用户数据失败')
     }
-  ]
+  }
 }
 
 // 组件挂载时加载数据
@@ -235,19 +229,19 @@ onMounted(() => {
   font-size: 1.2rem;
 }
 
-.trips-list, .payments-list {
+.payments-list {
   display: grid;
   gap: 1rem;
 }
 
-.trip-card, .payment-card {
+.payment-card {
   border: 1px solid #ddd;
   border-radius: 8px;
   padding: 1rem;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.trip-header, .payment-header {
+.payment-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -256,21 +250,10 @@ onMounted(() => {
   gap: 0.5rem;
 }
 
-.trip-header h4 {
-  margin: 0;
-  color: #42b883;
-  font-size: 1rem;
-}
-
-.price, .payment-amount {
+.payment-amount {
   font-size: 1.1rem;
   font-weight: bold;
   color: #e74c3c;
-}
-
-.trip-details p, .payment-details p {
-  margin: 0.3rem 0;
-  font-size: 0.9rem;
 }
 
 .payment-status {
@@ -288,6 +271,16 @@ onMounted(() => {
 .payment-status.pending {
   background-color: #fff3cd;
   color: #856404;
+}
+
+.payment-details p {
+  margin: 0.3rem 0;
+  font-size: 0.9rem;
+}
+
+.history-link {
+  margin-top: 2rem;
+  text-align: center;
 }
 
 /* Modal 样式 */
@@ -353,6 +346,8 @@ onMounted(() => {
   cursor: pointer;
   font-size: 1rem;
   width: 100%;
+  display: inline-block;
+  text-align: center;
 }
 
 .btn:hover {
@@ -413,16 +408,16 @@ onMounted(() => {
     font-size: 1.5rem;
   }
   
-  .trip-header h4 {
-    font-size: 1.1rem;
-  }
-  
-  .trip-header, .payment-header {
+  .payment-header {
     flex-wrap: nowrap;
   }
   
   .payment-status {
     font-size: 0.8rem;
+  }
+  
+  .payment-details p {
+    font-size: 1rem;
   }
   
   .modal-content {

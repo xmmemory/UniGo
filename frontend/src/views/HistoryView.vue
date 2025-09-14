@@ -1,12 +1,15 @@
 <template>
-  <div class="bookings">
-    <h1>我的预订</h1>
+  <div class="history">
+    <div class="history-header">
+      <h1>历史订单</h1>
+      <router-link to="/profile" class="btn btn-secondary">返回个人中心</router-link>
+    </div>
     
-    <!-- 作为乘客预订的行程 -->
+    <!-- 作为乘客的历史预订 -->
     <div class="section">
-      <h2>我预订的行程</h2>
+      <h2>我预订的历史行程</h2>
       <div class="bookings-list">
-        <div class="booking-card" v-for="booking in passengerBookings" :key="booking.id">
+        <div class="booking-card" v-for="booking in passengerHistory" :key="booking.id">
           <div class="booking-header">
             <h3>{{ booking.trip.departure }} → {{ booking.trip.destination }}</h3>
             <span class="status" :class="booking.status">{{ booking.status }}</span>
@@ -17,52 +20,42 @@
             <p><strong>价格:</strong> ¥{{ booking.trip.price_per_person }}</p>
             <p><strong>发布者:</strong> {{ booking.trip.owner_name }}</p>
           </div>
-          <div class="booking-actions">
-            <button class="btn btn-secondary" @click="cancelBooking(booking.id)">取消预订</button>
-          </div>
         </div>
       </div>
       
-      <div v-if="passengerBookings.length === 0" class="no-bookings">
-        <p>您还没有预订任何行程。</p>
+      <div v-if="passengerHistory.length === 0" class="no-bookings">
+        <p>您还没有历史预订记录。</p>
       </div>
     </div>
     
-    <!-- 作为发布者发布的行程 -->
+    <!-- 作为发布者的历史行程 -->
     <div class="section">
-      <h2>我发布的行程</h2>
+      <h2>我发布的历史行程</h2>
       <div class="trips-list">
-        <div class="trip-card" v-for="trip in publishedTrips" :key="trip.id">
+        <div class="trip-card" v-for="trip in publishedHistory" :key="trip.id">
           <div class="trip-header">
             <h3>{{ trip.departure }} → {{ trip.destination }}</h3>
             <span class="price">¥{{ trip.price_per_person }}</span>
           </div>
           <div class="trip-details">
             <p><strong>出发时间:</strong> {{ formatDate(trip.departure_time) }}</p>
-            <p><strong>剩余座位:</strong> {{ trip.available_seats }}</p>
+            <p><strong>总座位:</strong> {{ trip.available_seats + (trip.bookings_count || 0) }}</p>
             <p><strong>预订人数:</strong> {{ trip.bookings_count || 0 }}</p>
           </div>
         </div>
       </div>
       
-      <div v-if="publishedTrips.length === 0" class="no-trips">
-        <p>您还没有发布任何行程。</p>
+      <div v-if="publishedHistory.length === 0" class="no-trips">
+        <p>您还没有历史发布记录。</p>
       </div>
-    </div>
-    
-    <div class="actions">
-      <router-link to="/trips" class="btn btn-primary">查找行程</router-link>
-      <router-link to="/publish-trip" class="btn btn-secondary">发布行程</router-link>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { getUserBookings, cancelBooking as cancelBookingAPI } from '@/api/bookingService'
+import { getUserBookings } from '@/api/bookingService'
 import { getTrips } from '@/api/tripService'
-import { useAuthStore } from '@/stores/auth'
 
 // 定义预订数据结构
 interface Booking {
@@ -91,10 +84,8 @@ interface Trip {
 }
 
 // 状态管理
-const passengerBookings = ref<Booking[]>([])
-const publishedTrips = ref<Trip[]>([])
-const router = useRouter()
-const authStore = useAuthStore()
+const passengerHistory = ref<Booking[]>([])
+const publishedHistory = ref<Trip[]>([])
 
 // 格式化日期
 const formatDate = (dateString: string) => {
@@ -102,43 +93,11 @@ const formatDate = (dateString: string) => {
   return date.toLocaleString('zh-CN')
 }
 
-// 取消预订
-const cancelBooking = async (bookingId: number) => {
+// 加载乘客历史预订数据
+const loadPassengerHistory = async () => {
   try {
-    // 从authStore获取token
-    const token = authStore.token
-    if (!token) {
-      console.error('未找到认证token')
-      alert('认证失败，请重新登录')
-      authStore.logout()
-      router.push('/login')
-      return
-    }
-    
-    // 调用API取消预订
-    await cancelBookingAPI(bookingId, token)
-    alert(`已取消预订 ${bookingId}`)
-    // 重新加载预订列表
-    await loadPassengerBookings()
-    // 同时重新加载发布的行程列表，因为预订人数可能已更改
-    await loadPublishedTrips()
-  } catch (error: any) {
-    console.error('取消预订失败:', error)
-    if (error.message && error.message.includes('登录')) {
-      alert(error.message)
-      authStore.logout()
-      router.push('/login')
-    } else {
-      alert('取消预订失败，请稍后重试')
-    }
-  }
-}
-
-// 加载乘客预订数据
-const loadPassengerBookings = async () => {
-  try {
-    // 从authStore获取token
-    const token = authStore.token
+    // 从localStorage获取token
+    const token = localStorage.getItem('token')
     if (!token) {
       console.error('未找到认证token')
       return
@@ -147,32 +106,27 @@ const loadPassengerBookings = async () => {
     // 调用API获取预订数据
     const bookingsData = await getUserBookings(token)
     
-    // 过滤掉已结束的行程（这里简单地假设出发时间在当前时间之前的为已结束）
+    // 过滤出已结束的行程（这里简单地假设出发时间在当前时间之前的为已结束）
     const now = new Date()
-    passengerBookings.value = bookingsData.filter((booking: Booking) => {
+    passengerHistory.value = bookingsData.filter((booking: Booking) => {
       const departureTime = new Date(booking.trip.departure_time)
-      return departureTime >= now
+      return departureTime < now
     }).map((booking: any) => ({
       ...booking,
-      status: booking.status || 'confirmed' // 如果没有状态字段，设置默认值
+      status: booking.status || 'completed' // 如果没有状态字段，设置默认值
     }))
-  } catch (error: any) {
-    console.error('加载预订数据失败:', error)
-    if (error.message && error.message.includes('登录')) {
-      alert(error.message)
-      authStore.logout()
-      router.push('/login')
-    } else {
-      alert('加载预订数据失败，请稍后重试')
-    }
+  } catch (error) {
+    console.error('加载历史预订数据失败:', error)
+    // 使用模拟数据作为后备
+    passengerHistory.value = []
   }
 }
 
-// 加载发布的行程数据
-const loadPublishedTrips = async () => {
+// 加载发布的历史行程数据
+const loadPublishedHistory = async () => {
   try {
-    // 从authStore获取token
-    const token = authStore.token
+    // 从localStorage获取token
+    const token = localStorage.getItem('token')
     if (!token) {
       console.error('未找到认证token')
       return
@@ -181,11 +135,11 @@ const loadPublishedTrips = async () => {
     // 调用API获取行程数据
     const tripsData = await getTrips(token)
     
-    // 过滤掉已结束的行程（这里简单地假设出发时间在当前时间之前的为已结束）
+    // 过滤出已结束的行程（这里简单地假设出发时间在当前时间之前的为已结束）
     const now = new Date()
-    publishedTrips.value = tripsData.filter((trip: Trip) => {
+    publishedHistory.value = tripsData.filter((trip: Trip) => {
       const departureTime = new Date(trip.departure_time)
-      return departureTime >= now
+      return departureTime < now
     }).map((trip: any) => ({
       id: trip.id,
       departure: trip.departure,
@@ -195,28 +149,37 @@ const loadPublishedTrips = async () => {
       available_seats: trip.available_seats,
       bookings_count: trip.bookings ? trip.bookings.length : 0
     }))
-  } catch (error: any) {
-    console.error('加载发布的行程数据失败:', error)
-    if (error.message && error.message.includes('登录')) {
-      alert(error.message)
-      authStore.logout()
-      router.push('/login')
-    } else {
-      alert('加载发布的行程数据失败，请稍后重试')
-    }
+  } catch (error) {
+    console.error('加载发布的历史行程数据失败:', error)
+    // 使用模拟数据作为后备
+    publishedHistory.value = []
   }
 }
 
 // 组件挂载时加载数据
 onMounted(() => {
-  loadPassengerBookings()
-  loadPublishedTrips()
+  loadPassengerHistory()
+  loadPublishedHistory()
 })
 </script>
 
 <style scoped>
-.bookings {
+.history {
   padding: 1rem 0;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.history-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
 }
 
 .section {
@@ -279,6 +242,11 @@ onMounted(() => {
   color: #721c24;
 }
 
+.status.completed {
+  background-color: #cce5ff;
+  color: #004085;
+}
+
 .price {
   background-color: #e74c3c;
   color: white;
@@ -289,11 +257,6 @@ onMounted(() => {
   font-size: 0.9rem;
 }
 
-.booking-actions, .trip-actions {
-  margin-top: 1rem;
-  text-align: right;
-}
-
 .no-bookings, .no-trips {
   text-align: center;
   padding: 2rem 0;
@@ -302,12 +265,6 @@ onMounted(() => {
 .no-bookings p, .no-trips p {
   font-size: 1rem;
   margin-bottom: 1.5rem;
-}
-
-.actions {
-  display: flex;
-  gap: 1rem;
-  margin-top: 2rem;
 }
 
 .btn {
@@ -327,11 +284,6 @@ onMounted(() => {
   opacity: 0.9;
 }
 
-.btn-primary {
-  background-color: #42b883;
-  color: white;
-}
-
 .btn-secondary {
   background-color: #6c757d;
   color: white;
@@ -339,8 +291,12 @@ onMounted(() => {
 
 /* 平板和桌面端适配 */
 @media (min-width: 768px) {
-  .bookings {
+  .history {
     padding: 2rem 0;
+  }
+  
+  .history-header h1 {
+    font-size: 2rem;
   }
   
   .section h2 {
@@ -380,10 +336,6 @@ onMounted(() => {
   .no-bookings p, .no-trips p {
     font-size: 1.2rem;
     margin-bottom: 2rem;
-  }
-  
-  .actions {
-    justify-content: center;
   }
   
   .btn {

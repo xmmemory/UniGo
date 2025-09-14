@@ -39,16 +39,23 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { loginUser } from '@/api/userService'
+import { loginUser, getCurrentUser } from '@/api/userService'
+import { useAuthStore } from '@/stores/auth'
+
+// 定义登录表单数据结构
+interface LoginForm {
+  username: string
+  password: string
+}
 
 // 状态管理
-const loginForm = ref({
+const loginForm = ref<LoginForm>({
   username: '',
   password: ''
 })
-
 const loading = ref(false)
 const router = useRouter()
+const authStore = useAuthStore()
 
 // 登录函数
 const login = async () => {
@@ -62,16 +69,29 @@ const login = async () => {
     
     const response = await loginUser(credentials)
     
-    // 登录成功，保存token到localStorage
-    localStorage.setItem('token', response.access_token)
+    // 获取用户信息
+    const user = await getCurrentUser(response.access_token)
     
-    alert('登录成功！')
+    // 使用authStore登录
+    authStore.login(response.access_token, user)
     
     // 跳转到首页
     router.push('/')
-  } catch (error) {
+  } catch (error: any) {
     console.error('登录失败:', error)
-    alert('登录失败，请检查用户名和密码')
+    
+    // 根据错误类型显示不同的提示信息
+    if (error.message.includes('数据库连接失败')) {
+      alert('服务器暂时不可用，请稍后重试')
+    } else if (error.message.includes('用户名或密码错误')) {
+      alert('用户名或密码错误，请检查后重试')
+    } else if (error.message.includes('网络连接失败')) {
+      alert('网络连接失败，请确保后端服务正在运行')
+    } else if (error.message.includes('登录失败')) {
+      alert(error.message)
+    } else {
+      alert('登录失败，请检查用户名和密码')
+    }
   } finally {
     loading.value = false
   }

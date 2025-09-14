@@ -1,28 +1,34 @@
 <template>
   <div class="trips">
     <div class="trips-header">
-      <h1>行程列表</h1>
-      <button class="btn btn-primary" @click="showCreateForm = true">发布行程</button>
+      <h1>行程</h1>
+      <router-link to="/publish-trip" class="btn btn-primary">发布行程</router-link>
     </div>
 
     <div class="search-filters">
       <div class="filter-group">
         <label for="departure">出发地</label>
-        <input type="text" id="departure" v-model="filters.departure" placeholder="请输入出发地">
+        <!-- 使用地图地址选择器组件 -->
+        <MapAddressSelector v-model="filters.departure" ref="departureSelector" />
       </div>
       <div class="filter-group">
         <label for="destination">目的地</label>
-        <input type="text" id="destination" v-model="filters.destination" placeholder="请输入目的地">
+        <!-- 使用地图地址选择器组件 -->
+        <MapAddressSelector v-model="filters.destination" />
       </div>
       <div class="filter-group">
         <label for="date">出发日期</label>
         <input type="date" id="date" v-model="filters.date">
       </div>
+      <div class="filter-group">
+        <label for="time">出发时间</label>
+        <input type="time" id="time" v-model="filters.time">
+      </div>
       <button class="btn btn-secondary" @click="searchTrips">搜索</button>
     </div>
 
     <div class="trips-list">
-      <div class="trip-card" v-for="trip in trips" :key="trip.id">
+      <div class="trip-card" v-for="trip in filteredTrips" :key="trip.id">
         <div class="trip-header">
           <h3>{{ trip.departure }} → {{ trip.destination }}</h3>
           <span class="price">¥{{ trip.price_per_person }}</span>
@@ -30,51 +36,34 @@
         <div class="trip-details">
           <p><strong>出发时间:</strong> {{ formatDate(trip.departure_time) }}</p>
           <p><strong>剩余座位:</strong> {{ trip.available_seats }}</p>
-          <p><strong>发布者:</strong> {{ trip.owner_name }}</p>
+          <p><strong>发布者:</strong> {{ trip.owner_name || '未知' }}</p>
         </div>
         <div class="trip-actions">
           <button class="btn btn-primary" @click="bookTrip(trip.id)">预订</button>
         </div>
       </div>
     </div>
-
-    <!-- 创建行程表单 -->
-    <div class="modal" v-if="showCreateForm">
-      <div class="modal-content">
-        <span class="close" @click="showCreateForm = false">&times;</span>
-        <h2>发布新行程</h2>
-        <form @submit.prevent="createNewTrip">
-          <div class="form-group">
-            <label for="newDeparture">出发地</label>
-            <input type="text" id="newDeparture" v-model="newTrip.departure" required>
-          </div>
-          <div class="form-group">
-            <label for="newDestination">目的地</label>
-            <input type="text" id="newDestination" v-model="newTrip.destination" required>
-          </div>
-          <div class="form-group">
-            <label for="newDepartureTime">出发时间</label>
-            <input type="datetime-local" id="newDepartureTime" v-model="newTrip.departure_time" required>
-          </div>
-          <div class="form-group">
-            <label for="newPrice">每人价格 (¥)</label>
-            <input type="number" id="newPrice" v-model="newTrip.price_per_person" required min="0" step="0.01">
-          </div>
-          <div class="form-group">
-            <label for="newSeats">座位数量</label>
-            <input type="number" id="newSeats" v-model="newTrip.available_seats" required min="1">
-          </div>
-          <button type="submit" class="btn btn-primary">发布行程</button>
-        </form>
+    
+    <div v-if="filteredTrips.length === 0 && !loading" class="no-trips">
+      <p>暂无符合条件的行程。</p>
+      <!-- 调试信息 -->
+      <div v-if="trips.length > 0" class="debug-info">
+        <p>总行程数: {{ trips.length }}</p>
+        <p>过滤后行程数: {{ filteredTrips.length }}</p>
+        <p>过滤条件: {{ JSON.stringify(filters) }}</p>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { getTrips, createTrip } from '@/api/tripService'
+import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { getPublicTrips, getTrips, createTrip } from '@/api/tripService'
 import { createBooking } from '@/api/bookingService'
+import { useAuthStore } from '@/stores/auth'
+// 引入地图地址选择器组件（仅用于搜索过滤器）
+import MapAddressSelector from '@/components/MapAddressSelector.vue'
 
 // 定义行程数据结构
 interface Trip {
@@ -84,78 +73,181 @@ interface Trip {
   departure_time: string
   price_per_person: number
   available_seats: number
-  owner_name: string
+  owner_name: string | null
+  owner_id: number
+}
+
+// 定义地图选择器引用
+interface MapSelectorInstance {
+  getCurrentLocation: () => void
 }
 
 // 状态管理
 const trips = ref<Trip[]>([])
-const showCreateForm = ref(false)
+const loading = ref(false)
 const filters = ref({
   departure: '',
   destination: '',
-  date: ''
+  date: '',
+  time: ''
 })
+const router = useRouter()
+const authStore = useAuthStore()
 
-const newTrip = ref({
-  departure: '',
-  destination: '',
-  departure_time: '',
-  price_per_person: 0,
-  available_seats: 1
-})
+// 地图选择器引用
+const departureSelector = ref<MapSelectorInstance | null>(null)
+
+// 根据过滤条件计算显示的行程
+const filteredTrips = computed(() => {
+  // 获取当前用户ID
+  let currentUserId = null;
+  let isLoggedIn = false;
+  try {
+    if (authStore.user) {
+      currentUserId = authStore.user.id;
+      isLoggedIn = true;
+    }
+  } catch (e) {
+    console.error('解析用户信息失败:', e);
+  }
+  
+  return trips.value.filter(trip => {
+    // 只有在用户已登录时才排除当前用户自己发布的行程
+    if (isLoggedIn && currentUserId && trip.owner_id === currentUserId) {
+      return false;
+    }
+    
+    // 出发地过滤 - 增强匹配逻辑
+    if (filters.value.departure) {
+      const departureFilter = filters.value.departure.trim().toLowerCase();
+      const tripDeparture = trip.departure.trim().toLowerCase();
+      
+      // 如果过滤条件为空，跳过过滤
+      if (!departureFilter) return true;
+      
+      // 支持多种匹配方式：
+      // 1. 精确匹配
+      // 2. 包含匹配
+      // 3. 城市名称标准化匹配（北京/北京市）
+      const isMatch = 
+        tripDeparture === departureFilter ||
+        tripDeparture.includes(departureFilter) ||
+        departureFilter.includes(tripDeparture) ||
+        normalizeCityName(tripDeparture).includes(normalizeCityName(departureFilter)) ||
+        normalizeCityName(departureFilter).includes(normalizeCityName(tripDeparture));
+      
+      if (!isMatch) {
+        return false;
+      }
+    }
+    
+    // 目的地过滤 - 增强匹配逻辑
+    if (filters.value.destination) {
+      const destinationFilter = filters.value.destination.trim().toLowerCase();
+      const tripDestination = trip.destination.trim().toLowerCase();
+      
+      // 如果过滤条件为空，跳过过滤
+      if (!destinationFilter) return true;
+      
+      // 支持多种匹配方式
+      const isMatch = 
+        tripDestination === destinationFilter ||
+        tripDestination.includes(destinationFilter) ||
+        destinationFilter.includes(tripDestination) ||
+        normalizeCityName(tripDestination).includes(normalizeCityName(destinationFilter)) ||
+        normalizeCityName(destinationFilter).includes(normalizeCityName(tripDestination));
+      
+      if (!isMatch) {
+        return false;
+      }
+    }
+    
+    // 日期过滤
+    if (filters.value.date) {
+      try {
+        const tripDate = new Date(trip.departure_time).toISOString().split('T')[0];
+        if (tripDate !== filters.value.date) {
+          return false;
+        }
+      } catch (e) {
+        console.error('日期解析错误:', e);
+        return false;
+      }
+    }
+    
+    // 时间过滤
+    if (filters.value.time) {
+      try {
+        const tripTime = new Date(trip.departure_time).toTimeString().slice(0, 5);
+        if (tripTime !== filters.value.time) {
+          return false;
+        }
+      } catch (e) {
+        console.error('时间解析错误:', e);
+        return false;
+      }
+    }
+    
+    return true;
+  });
+});
+
+// 城市名称标准化函数
+const normalizeCityName = (cityName: string): string => {
+  // 移除"市"字进行标准化匹配
+  return cityName.replace(/市$/, '');
+};
 
 // 格式化日期
 const formatDate = (dateString: string) => {
-  const date = new Date(dateString)
-  return date.toLocaleString('zh-CN')
+  try {
+    const date = new Date(dateString)
+    return date.toLocaleString('zh-CN')
+  } catch (e) {
+    console.error('日期格式化错误:', e)
+    return '无效日期'
+  }
 }
 
 // 搜索行程
 const searchTrips = async () => {
+  loading.value = true
   try {
-    // 从localStorage获取token
-    const token = localStorage.getItem('token')
-    if (!token) {
-      alert('请先登录')
-      return
+    // 尝试从authStore获取token
+    const token = authStore.token
+    
+    // 如果有token，使用需要认证的API；否则使用公开API
+    let data;
+    if (token) {
+      data = await getTrips(token)
+    } else {
+      data = await getPublicTrips()
     }
     
-    // 调用API获取行程数据
-    const data = await getTrips(token)
+    console.log('从API获取的数据:', data)
     trips.value = data
-  } catch (error) {
+  } catch (error: any) {
     console.error('获取行程失败:', error)
-    // 使用模拟数据作为后备
-    trips.value = [
-      {
-        id: 1,
-        departure: '北京',
-        destination: '上海',
-        departure_time: '2025-09-05T08:00:00',
-        price_per_person: 150,
-        available_seats: 3,
-        owner_name: '张三'
-      },
-      {
-        id: 2,
-        departure: '上海',
-        destination: '广州',
-        departure_time: '2025-09-06T14:30:00',
-        price_per_person: 120,
-        available_seats: 2,
-        owner_name: '李四'
-      }
-    ]
+    if (error.message && error.message.includes('登录')) {
+      alert(error.message)
+      authStore.logout()
+      router.push('/login')
+    } else {
+      alert('获取行程失败，请稍后重试')
+    }
+  } finally {
+    loading.value = false
   }
 }
 
 // 预订行程
 const bookTrip = async (tripId: number) => {
   try {
-    // 从localStorage获取token
-    const token = localStorage.getItem('token')
+    // 从authStore获取token
+    const token = authStore.token
     if (!token) {
       alert('请先登录')
+      router.push('/login')
       return
     }
     
@@ -166,58 +258,35 @@ const bookTrip = async (tripId: number) => {
     alert(`已预订行程 ${tripId}`)
     // 重新加载行程列表
     searchTrips()
-  } catch (error) {
+  } catch (error: any) {
     console.error('预订失败:', error)
-    alert('预订失败，请稍后重试')
+    if (error.message && error.message.includes('登录')) {
+      alert(error.message)
+      authStore.logout()
+      router.push('/login')
+    } else {
+      alert('预订失败，请稍后重试')
+    }
   }
 }
 
-// 创建行程
-const createNewTrip = async () => {
-  try {
-    // 从localStorage获取token
-    const token = localStorage.getItem('token')
-    if (!token) {
-      alert('请先登录')
-      return
-    }
-    
-    // 调用API创建行程
-    const tripData = {
-      departure: newTrip.value.departure,
-      destination: newTrip.value.destination,
-      departure_time: newTrip.value.departure_time,
-      price_per_person: newTrip.value.price_per_person,
-      available_seats: newTrip.value.available_seats
-    }
-    
-    await createTrip(tripData, token)
-    
-    alert('行程创建成功！')
-    showCreateForm.value = false
-    // 重置表单
-    newTrip.value = {
-      departure: '',
-      destination: '',
-      departure_time: '',
-      price_per_person: 0,
-      available_seats: 1
-    }
-    // 重新加载行程列表
-    searchTrips()
-  } catch (error) {
-    console.error('创建行程失败:', error)
-    alert('行程创建失败，请稍后重试')
-  }
-}
-
-// 组件挂载时加载数据
+// 组件挂载时加载数据和获取当前位置
 onMounted(() => {
   searchTrips()
+  
+  // 设置默认日期为当前日期
+  const today = new Date()
+  filters.value.date = today.toISOString().split('T')[0]
+  
+  // 获取当前位置
+  if (departureSelector.value) {
+    departureSelector.value.getCurrentLocation()
+  }
 })
 </script>
 
 <style scoped>
+
 .trips {
   padding: 1rem 0;
 }
@@ -303,6 +372,31 @@ onMounted(() => {
 .trip-actions {
   margin-top: 1rem;
   text-align: right;
+}
+
+.no-trips {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.no-trips p {
+  font-size: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.debug-info {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.debug-info p {
+  margin: 0.2rem 0;
+  font-size: 0.8rem;
+  color: #6c757d;
 }
 
 /* Modal 样式 */

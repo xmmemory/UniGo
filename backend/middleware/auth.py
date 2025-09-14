@@ -4,9 +4,19 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 from database import get_db
 from models import User
-from auth import SECRET_KEY, ALGORITHM
+from dotenv import load_dotenv
+import os
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login")
+# 加载环境变量
+load_dotenv()
+
+# 从环境变量获取配置，如果没有则使用默认值
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+
+print(f"Middleware SECRET_KEY: {SECRET_KEY}")
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login/")
 
 async def verify_token(request: Request, db: Session = Depends(get_db)):
     # 获取Authorization头
@@ -37,8 +47,9 @@ async def verify_token(request: Request, db: Session = Depends(get_db)):
             )
             
         # 解码JWT令牌
+        print(f"Decoding token with SECRET_KEY: {SECRET_KEY}")
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
+        username = payload.get("sub")
         if username is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

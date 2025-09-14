@@ -1,13 +1,16 @@
-from sqlalchemy import create_engine, inspect
-from database import Base
+from database import engine
+from sqlalchemy import text
 
-# 数据库连接
-engine = create_engine("postgresql://postgres:199311@localhost:5432/unigo")
-
-# 检查 users 表结构
-inspector = inspect(engine)
-columns = inspector.get_columns("users")
-
-print("Users 表结构：")
-for column in columns:
-    print(column)
+# 检查users表的列
+with engine.connect() as conn:
+    result = conn.execute(text('SELECT column_name FROM information_schema.columns WHERE table_name = \'users\''))
+    columns = [row[0] for row in result]
+    print("Users table columns:")
+    for col in columns:
+        print(f"  - {col}")
+        
+    # 检查reputation_score列是否存在
+    if 'reputation_score' in columns:
+        print("\n✓ reputation_score column exists")
+    else:
+        print("\n✗ reputation_score column does not exist")

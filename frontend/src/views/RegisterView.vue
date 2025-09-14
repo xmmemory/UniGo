@@ -102,14 +102,19 @@ const register = async () => {
     
     await registerUser(userData)
     
-    // 注册成功
+    // 恢复注册成功的提示框
     alert('注册成功！请登录')
     
     // 跳转到登录页
     router.push('/login')
-  } catch (error) {
+  } catch (error: any) {
     console.error('注册失败:', error)
-    alert('注册失败，请稍后重试')
+    // 显示更详细的错误信息
+    let errorMessage = '注册失败，请稍后重试'
+    if (error.message) {
+      errorMessage = error.message
+    }
+    alert(errorMessage)
   } finally {
     loading.value = false
   }
