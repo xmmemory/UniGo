@@ -1,0 +1,17 @@
+{
+  "name": "@campusgo/shared",
+  "version": "1.0.0",
+  "description": "Shared components and utilities for CampusGo",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "campusgo",
+    "shared",
+    "components"
+  ],
+  "author": "CampusGo Team",
+  "license": "MIT"
+}

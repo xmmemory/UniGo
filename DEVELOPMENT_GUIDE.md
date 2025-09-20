@@ -1,4 +1,4 @@
-# UniGo 项目开发手册
+# CampusGo 项目开发手册
 
 ## 目录
 1. [项目概述](#项目概述)
@@ -19,7 +19,7 @@
 
 ## 项目概述
 
-UniGo是一个学生拼车平台，旨在为大学生提供便捷、安全的拼车服务。项目采用前后端分离架构，后端使用FastAPI框架，前端使用Vue 3 + TypeScript。
+CampusGo是一个校园生活平台，旨在为大学生提供便捷、安全的拼车服务。项目采用前后端分离架构，后端使用FastAPI框架，前端使用Vue 3 + TypeScript。
 
 ### 核心功能模块
 - 用户管理（注册、登录、个人信息）
@@ -583,6 +583,9 @@ npm run test
 - 组件文件名使用PascalCase
 - 组件属性使用kebab-case
 - 组件样式使用scoped
+
+### 地址选择器组件
+项目中使用了增强版地图地址选择器组件(EnhancedMapAddressSelector)，提供了自动补全和当前位置获取功能。该组件位于`src/components/EnhancedMapAddressSelector.vue`，相关文档请查看`src/components/EnhancedMapAddressSelector.md`。
 
 ## Git工作流
 

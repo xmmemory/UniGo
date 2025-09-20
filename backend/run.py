@@ -11,6 +11,6 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8001))
     
     # 导入app
-    from main import app
+    from backend.main import app
     
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run("backend.main:app", host=host, port=port, reload=True)
